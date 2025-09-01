@@ -1,0 +1,14 @@
+# Copy this file to .env and fill in your actual values
+
+# Azure Speech Services Configuration (Required for voice features)
+# Get these from Azure Portal: https://portal.azure.com/
+# 1. Go to Azure Portal
+# 2. Create a Speech Service resource
+# 3. Go to "Keys and Endpoint" section
+# 4. Copy Key 1 and Region
+
+AZURE_SPEECH_KEY=your_azure_speech_key_here
+AZURE_SPEECH_REGION=your_azure_region_here  # e.g., eastus, westeurope, southeastasia
+
+# Optional: Calendar Integration
+# CAL_API_KEY=your_cal_api_key_here

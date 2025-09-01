@@ -3,33 +3,29 @@ import datetime
 import logging
 import os
 import sys
-from livekit.plugins import elevenlabs
 from dataclasses import dataclass
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from calendar_api import AvailableSlot, CalComCalendar, Calendar, FakeCalendar, SlotUnavailableError
+from calendar_api import AvailableSlot, FakeCalendar, SlotUnavailableError
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
     AgentSession,
     JobContext,
     RunContext,
-    ToolError,
     WorkerOptions,
-    beta,
     cli,
     function_tool,
 )
-from livekit.plugins import azure, cartesia, deepgram, openai, silero
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
+from livekit.plugins import openai, azure, elevenlabs, silero
 
 load_dotenv()
 
 @dataclass
 class ClientData:
-    cal: Calendar
+    cal: FakeCalendar
     full_name: str = ""
     phone_number: str = ""
     email: str = ""
@@ -43,27 +39,20 @@ class ClientData:
 
 logger = logging.getLogger("shura-legal")
 
-class ShuraLegalAgent(Agent):
+class SimpleShuraLegalAgent(Agent):
     def __init__(self, *, timezone: str) -> None:
         self.tz = ZoneInfo(timezone)
         today = datetime.datetime.now(self.tz).strftime("%A, %B %d, %Y")
         
         super().__init__(
             instructions=(
-                f"أنت وكيل صوتي تمثل منصة شورى للخدمات القانونية - منصة سعودية إلكترونية تقدم خدمات واستشارات قانونية. "
+                f"أنت وكيل نصي تمثل منصة شورى للخدمات القانونية - منصة سعودية إلكترونية تقدم خدمات واستشارات قانونية. "
                 f"اليوم هو {today}. "
                 "أسلوبك: ودود، مطمئن، سهل الفهم باللهجة السعودية، مع صورة مهنية واضحة. "
-                "هذه محادثة صوتية - تكلم بشكل طبيعي وواضح ومختصر. "
                 
-                "ابدأ المكالمة بالتحية مرة وحدة: "
+                "ابدأ المحادثة بالتحية: "
                 "'السلام عليكم! يعطيك العافية ومرحبا بك في شورى للخدمات القانونية. أنا مساعدك الذكي وموجود هنا عشان أساعدك.' "
                 "ثم مباشرة: 'ممكن أعرف اسمك الكريم؟' "
-                
-                "بعد ما يجاوب: 'تشرفت فيك يا أستاذ [اسم العميل]. كيف أقدر أخدمك؟' "
-                
-                "لا تجمع أي بيانات إلا إذا العميل طلب خدمة فعلية مثل: استشارة قانونية، محامي، عقد، أو خدمة من خدمات شورى. "
-                "إذا العميل سأل سؤال عام أو استفسار بسيط، أعطه المعلومة فقط من دون طلب بيانات. "
-                "اسأل سؤال واحد فقط في كل مرة وانتظر الرد. "
                 
                 "خدمات شورى تشمل: استشارات قانونية، صياغة ومراجعة العقود، إعداد مذكرات قانونية، التمثيل القضائي، التوثيق القانوني، الترجمة القانونية، دراسة وتحليل القضايا. "
                 
@@ -76,15 +65,11 @@ class ShuraLegalAgent(Agent):
                 "طرق الدفع: مدى، أبل باي، فيزا، ماستر كارد، والتقسيط عبر تمارا. "
                 
                 "عند طلب موعد للاستشارة، استخدم وظائف جدولة المواعيد المتاحة. "
-                "قل أشياء مثل 'الاثنين الساعة اثنين' - تجنب المناطق الزمنية والطوابع الزمنية. "
-                "استخدم عبارات طبيعية مثل 'في الصباح' أو 'في المساء'. "
                 
                 "اختم دائماً: 'يعطيك العافية، خلال أربع وعشرين ساعة بنتواصل معك ونربطك بالمحامي المناسب.' "
             )
         )
         self._slots_map: dict[str, AvailableSlot] = {}
-        self._greeted = False
-        self._asked_name = False
 
     def _required_fields(self) -> list[str]:
         return ["full_name", "phone_number", "email", "service_type"]
@@ -151,7 +136,7 @@ class ShuraLegalAgent(Agent):
     async def list_available_slots(
         self, 
         ctx: RunContext[ClientData], 
-        range: Literal["+2week", "+1month", "+3month", "default"]
+        range: Literal["+2week", "+1month", "+3month", "default"] = "default"
     ) -> str:
         """
         Return available consultation slots in Arabic.
@@ -173,13 +158,9 @@ class ShuraLegalAgent(Agent):
             local = slot.start_time.astimezone(self.tz)
             delta = local - now
             days = delta.days
-            seconds = delta.seconds
             
             if local.date() == now.date():
-                if seconds < 3600:
-                    rel = "خلال أقل من ساعة"
-                else:
-                    rel = "اليوم"
+                rel = "اليوم"
             elif local.date() == (now.date() + datetime.timedelta(days=1)):
                 rel = "بكرة"
             elif days < 7:
@@ -251,15 +232,8 @@ async def entrypoint(ctx: JobContext):
     await ctx.connect()
     timezone = "Asia/Riyadh"
     
-    if cal_api_key := os.getenv("CAL_API_KEY", None):
-        logger.info("CAL_API_KEY detected, using cal.com calendar")
-        cal = CalComCalendar(api_key=cal_api_key, timezone=timezone)
-    else:
-        logger.warning(
-            "CAL_API_KEY is not set. Falling back to FakeCalendar; set CAL_API_KEY to enable Cal.com integration."
-        )
-        cal = FakeCalendar(timezone=timezone)
-
+    # Use FakeCalendar for testing
+    cal = FakeCalendar(timezone=timezone)
     await cal.initialize()
 
     session = AgentSession[ClientData](
@@ -267,17 +241,15 @@ async def entrypoint(ctx: JobContext):
         stt=azure.STT(
             speech_key=os.getenv("AZURE_SPEECH_KEY"),
             speech_region=os.getenv("AZURE_SPEECH_REGION"),
-            speech_host=os.getenv("AZURE_SPEECH_HOST"),
-            languages=["ar-SA"]  # Arabic (Saudi Arabia)
+            language=["ar-SA"]  # Arabic (Saudi Arabia)
         ),
         llm=openai.LLM(model="gpt-4o", parallel_tool_calls=False, temperature=0.45),
-        tts=elevenlabs.TTS(voice_id="3nav5pHC1EYvWOd5LmnA", model="eleven_multilingual_v2"),        
-        turn_detection=MultilingualModel(),
+        tts=elevenlabs.TTS(voice_id="3nav5pHC1EYvWOd5LmnA", model="eleven_multilingual_v2"),
         vad=silero.VAD.load(),
         max_tool_steps=1,
     )
 
-    await session.start(agent=ShuraLegalAgent(timezone=timezone), room=ctx.room)
+    await session.start(agent=SimpleShuraLegalAgent(timezone=timezone), room=ctx.room)
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

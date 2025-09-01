@@ -1,4 +1,4 @@
-livekit-agents[openai, cartesia, elevenlabs, deepgram, silero, turn-detector]>=1.0
+livekit-agents[openai, cartesia, elevenlabs, deepgram, silero, turn-detector,elevenlabs, azure]>=1.2
 python-dotenv>=1.0
 aiohttp
 tzdata
